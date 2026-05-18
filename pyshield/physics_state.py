@@ -515,3 +515,24 @@ class PhysicsState:
                         },
                     )
         return xr.Dataset(data_vars=data_vars)
+
+    @classmethod
+    def register_diag_manager_fields(cls, monitor: DiagManagerMonitor, init_time: datetime):
+        """
+        Registers all fields from the state for use in the diag_manager from FMS.
+        Axis/dims will need to be registered prior to this call.
+        """
+        for _field in fields(cls):
+            if "dims" in _field.metadata.keys():
+                dim_names = _field.metadata["dims"]
+            else:
+                dim_names = None # static field
+            monitor.register_field(
+                module_name="pyfv3",
+                field_name=field.metadata["name"],
+                dims = dim_names,
+                units = field.metadata["units"],
+                init_time=init_time,
+                dtype=Float,
+            )
+
