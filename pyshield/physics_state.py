@@ -9,6 +9,8 @@ from ndsl.constants import I_DIM, J_DIM, K_DIM, K_INTERFACE_DIM
 from ndsl.dsl.typing import Float
 from pyshield._config import PHYSICS_PACKAGES
 from pyshield.stencils.gfs_microphysics import GFSMicrophysicsState
+from ndsl import DiagManagerMonitor
+import datetime
 
 
 @dataclass()
