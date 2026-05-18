@@ -40,8 +40,6 @@ from pyshield.stencils.gfdl_cld_microphysics import (
 from pyshield.stencils.gfs_microphysics import GFSMicrophysics
 from pyshield.stencils.pbl import PBLConfig, SATMEDMFVDiffState, ScaleAwareTKEMoistEDMF
 from pyshield.stencils.shallow_convection import (
-    SC_TRACER_DIM,
-    FloatFieldShalConv,
     SAMFShalConvState,
     ScaleAwareMassFluxShallowConvection,
     ShallowConvectionConfig,
@@ -763,11 +761,10 @@ def results_from_pbl(
 
 
 def fill_shalconv_state(
-    shalconv_q1: FloatField,
     shalconv_t1: FloatField,
     shalconv_u1: FloatField,
     shalconv_v1: FloatField,
-    shalconv_qtr: FloatFieldShalConv,
+    shalconv_qtr: FloatFieldTracer,
     shalconv_dot: FloatField,
     shalconv_hpbl: FloatFieldIJ,
     shalconv_prslp: FloatField,
@@ -788,6 +785,7 @@ def fill_shalconv_state(
     qgraupel: FloatField,
     qo3mr: FloatField,
     qsgs_tke: FloatField,
+    qcld: FloatField,
     physics_dot: FloatField,
     physics_hpbl: FloatFieldIJ,
     physics_prslp: FloatField,
@@ -804,7 +802,6 @@ def fill_shalconv_state(
         shalconv_kcnv = 0  # no deep convection
         shalconv_islimsk = 0  # sea-only for now
     with computation(PARALLEL), interval(...):
-        shalconv_q1 = physics_q1
         shalconv_t1 = physics_t1
         shalconv_u1 = physics_u1
         shalconv_v1 = physics_v1
@@ -814,14 +811,16 @@ def fill_shalconv_state(
         shalconv_delp = physics_delp
 
         # TODO: These should not be hardcoded
-        shalconv_qtr[0, 0, 0][0] = qliquid
-        shalconv_qtr[0, 0, 0][1] = qrain
-        shalconv_qtr[0, 0, 0][2] = qice
-        shalconv_qtr[0, 0, 0][3] = qsnow
-        shalconv_qtr[0, 0, 0][4] = qgraupel
-        shalconv_qtr[0, 0, 0][5] = qo3mr
-        shalconv_qtr[0, 0, 0][6] = qsgs_tke
-        shalconv_qtr[0, 0, 0][6] = qsgs_tke
+        shalconv_qtr[0, 0, 0][0] = physics_q1
+        shalconv_qtr[0, 0, 0][1] = qliquid
+        shalconv_qtr[0, 0, 0][2] = qrain
+        shalconv_qtr[0, 0, 0][3] = qice
+        shalconv_qtr[0, 0, 0][4] = qsnow
+        shalconv_qtr[0, 0, 0][5] = qgraupel
+        shalconv_qtr[0, 0, 0][6] = qo3mr
+        shalconv_qtr[0, 0, 0][7] = qsgs_tke
+        shalconv_qtr[0, 0, 0][8] = qsgs_tke
+        shalconv_qtr[0, 0, 0][9] = qcld
 
 
 def results_from_shalconv(
@@ -836,24 +835,25 @@ def results_from_shalconv(
     physics_qgraupel: FloatField,
     physics_qo3mr: FloatField,
     physics_qsgs_tke: FloatField,
+    phtsics_qcld: FloatField,
     shalconv_t1: FloatField,
     shalconv_u1: FloatField,
     shalconv_v1: FloatField,
-    shalconv_q1: FloatField,
-    shalconv_qtr: FloatFieldShalConv,
+    shalconv_qtr: FloatFieldTracer,
 ):
     with computation(PARALLEL), interval(...):
         physics_t = shalconv_t1
         physics_u = shalconv_u1
         physics_v = shalconv_v1
-        physics_qvapor = shalconv_q1
-        physics_qliquid = shalconv_qtr[0, 0, 0][0]
-        physics_qrain = shalconv_qtr[0, 0, 0][1]
-        physics_qice = shalconv_qtr[0, 0, 0][2]
-        physics_qsnow = shalconv_qtr[0, 0, 0][3]
-        physics_qgraupel = shalconv_qtr[0, 0, 0][4]
-        physics_qo3mr = shalconv_qtr[0, 0, 0][5]
-        physics_qsgs_tke = shalconv_qtr[0, 0, 0][6]
+        physics_qvapor = shalconv_qtr[0, 0, 0][0]
+        physics_qliquid = shalconv_qtr[0, 0, 0][1]
+        physics_qrain = shalconv_qtr[0, 0, 0][2]
+        physics_qice = shalconv_qtr[0, 0, 0][3]
+        physics_qsnow = shalconv_qtr[0, 0, 0][4]
+        physics_qgraupel = shalconv_qtr[0, 0, 0][5]
+        physics_qo3mr = shalconv_qtr[0, 0, 0][6]
+        physics_qsgs_tke = shalconv_qtr[0, 0, 0][7]
+        phtsics_qcld = shalconv_qtr[0, 0, 0][8]
 
 
 def prepare_gfs_microphysics(
@@ -1111,9 +1111,7 @@ class Physics:
                 f"ntracers != 9 has not been implemented, got {self._ntracers}"
             )
         self.TRACER_DIM = TRACER_DIM
-        self.SC_TRACER_DIM = SC_TRACER_DIM
         self.quantity_factory = quantity_factory
-        # TODO SC_TRACER_DIM shouldn't be hardcoded
         self.quantity_factory.add_data_dimensions(
             {
                 self.TRACER_DIM: self._ntracers,
@@ -1428,11 +1426,6 @@ class Physics:
             if sc_config is None:
                 raise ValueError("Shallow convection enabled but no config specified")
             self._samf_shalconv = True
-            self.quantity_factory.add_data_dimensions(
-                {
-                    self.SC_TRACER_DIM: sc_config.nsamftrac + 2,
-                }
-            )
             self._fill_shalconv_state = stencil_factory.from_origin_domain(
                 func=fill_shalconv_state,
                 origin=grid_indexing.origin_compute(),
@@ -1634,57 +1627,55 @@ class Physics:
         )
 
         # Call radiation if timestep is right
-        if do_radiation and self._rterrtmgp:
-            if not surface_state:
-                raise ValueError("You must pass a surface state to run radiation")
-            if not radiation_state:
-                raise ValueError("You must pass a radiation state to run radiation")
-            if not date:
-                raise ValueError("You must pass a date to run radiation")
-            self._copy_to_radiation(
-                self._prsi1,
-                self._prsl1,
-                self._t1,
-                physics_state.tsfc,
-                self._qvapor1,
-                self._qliquid1,
-                self._qice1,
-                self._qo3mr1,
-                self._qcld1,
-                radiation_state.prsi,
-                radiation_state.prsl,
-                radiation_state.tlyr,
-                radiation_state.tsfc,
-                radiation_state.qvapor,
-                radiation_state.qliquid,
-                radiation_state.qice,
-                radiation_state.qo3mr,
-                radiation_state.qcld,
-            )
-            ndsl_log.info("Entering radiation")
-            self._radiation.step_radiation(radiation_state, surface_state, date)
-            self._copy_from_radiation(
-                radiation_state.hrtsw,
-                radiation_state.hrtlw,
-                radiation_state.fswu,
-                radiation_state.fswd,
-                radiation_state.flwu,
-                radiation_state.flwd,
-                physics_state.hrtsw,
-                physics_state.hrtlw,
-                self._hrtsw1,
-                self._hrtlw1,
-                physics_state.fswu,
-                physics_state.fswd,
-                physics_state.flwu,
-                physics_state.flwd,
-                self._layer_flip,
-                self._level_flip,
-            )
-
         if self._rterrtmgp:
-            if not radiation_state:
-                raise ValueError("You must pass a radiation state to run radiation")
+            if do_radiation:
+                if not surface_state:
+                    raise ValueError("You must pass a surface state to run radiation")
+                if not radiation_state:
+                    raise ValueError("You must pass a radiation state to run radiation")
+                if not date:
+                    raise ValueError("You must pass a date to run radiation")
+                self._copy_to_radiation(
+                    self._prsi1,
+                    self._prsl1,
+                    self._t1,
+                    physics_state.tsfc,
+                    self._qvapor1,
+                    self._qliquid1,
+                    self._qice1,
+                    self._qo3mr1,
+                    self._qcld1,
+                    radiation_state.prsi,
+                    radiation_state.prsl,
+                    radiation_state.tlyr,
+                    radiation_state.tsfc,
+                    radiation_state.qvapor,
+                    radiation_state.qliquid,
+                    radiation_state.qice,
+                    radiation_state.qo3mr,
+                    radiation_state.qcld,
+                )
+                ndsl_log.info("Entering radiation")
+                self._radiation.step_radiation(radiation_state, surface_state, date)
+                self._copy_from_radiation(
+                    radiation_state.hrtsw,
+                    radiation_state.hrtlw,
+                    radiation_state.fswu,
+                    radiation_state.fswd,
+                    radiation_state.flwu,
+                    radiation_state.flwd,
+                    physics_state.hrtsw,
+                    physics_state.hrtlw,
+                    self._hrtsw1,
+                    self._hrtlw1,
+                    physics_state.fswu,
+                    physics_state.fswd,
+                    physics_state.flwu,
+                    physics_state.flwd,
+                    self._layer_flip,
+                    self._level_flip,
+                )
+
             self._interpolate_radiation(
                 self._gridlat,
                 self._gridlon,
@@ -1884,7 +1875,6 @@ class Physics:
         # Shallow convection:
         if self._samf_shalconv:
             self._fill_shalconv_state(
-                self.shalconv_state.q1,
                 self.shalconv_state.t1,
                 self.shalconv_state.u1,
                 self.shalconv_state.v1,
@@ -1909,6 +1899,7 @@ class Physics:
                 self._qgraupel1,
                 self._qo3mr1,
                 self._qsgs_tke1,
+                self._qcld1,
                 self._w1,
                 physics_state.hpbl,
                 self._prsl1,
@@ -1932,10 +1923,10 @@ class Physics:
                 self._qgraupel1,
                 self._qo3mr1,
                 self._qsgs_tke1,
+                self._qcld1,
                 self.shalconv_state.t1,
                 self.shalconv_state.u1,
                 self.shalconv_state.v1,
-                self.shalconv_state.q1,
                 self.shalconv_state.qtr,
             )
 
