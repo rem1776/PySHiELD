@@ -7,6 +7,9 @@ import ndsl.dsl.gt4py_utils as gt_utils
 from ndsl import GridSizer, Quantity, QuantityFactory
 from ndsl.constants import I_DIM, J_DIM, K_DIM, K_INTERFACE_DIM
 from ndsl.dsl.typing import Float
+from ndsl.monitor.diag_field_registration import (
+    register_diag_manager_fields as register_diag_manager_fields_common,
+)
 from pyshield._config import PHYSICS_PACKAGES
 from pyshield.stencils.gfs_microphysics import GFSMicrophysicsState
 from ndsl import DiagManagerMonitor
@@ -519,22 +522,31 @@ class PhysicsState:
         return xr.Dataset(data_vars=data_vars)
 
     @classmethod
-    def register_diag_manager_fields(cls, monitor: DiagManagerMonitor, init_time: datetime):
+    def register_diag_manager_fields(
+        cls,
+        monitor: DiagManagerMonitor,
+        init_time: datetime,
+        field_names: list[str],
+    ):
         """
         Registers all fields from the state for use in the diag_manager from FMS.
         Axis/dims will need to be registered prior to this call.
         """
-        for _field in fields(cls):
-            if "dims" in _field.metadata.keys():
-                dim_names = _field.metadata["dims"]
-            else:
-                dim_names = None # static field
+        for _field_name in list(field_names):
+            _field = cls.__dataclass_fields__.get(_field_name)
+            if _field is None:
+                continue
+
+            dim_names = _field.metadata.get("dims", "unknown")
+            units = _field.metadata.get("units", "unknown")
             monitor.register_field(
                 module_name="pyfv3",
-                field_name=field.metadata["name"],
-                dims = dim_names,
-                units = field.metadata["units"],
+                field_name=_field_name,
+                long_name=_field.metadata["name"],
+                dims=dim_names,
+                units=units,
                 init_time=init_time,
-                dtype=Float,
+                dtype="float64",
             )
+            field_names.remove(_field_name)
 
